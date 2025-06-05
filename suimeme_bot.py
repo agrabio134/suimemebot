@@ -545,53 +545,52 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_time = time.time()
 
     # Check if user is already processing a request
-    if ACTIVE_REQUESTS.get(key, False):
+    if key in ACTIVE_REQUESTS and ACTIVE_REQUESTS[key]:
         ticker = context.chat_data.get('ticker', '$SUIMEME')
         await update.message.reply_text(
-            f"Yo, slime fam! 😎 Hold on, you're spamming too fast! Wait for your current {ticker} meme to finish! 💦"
+            f"Yo, slime fam! 😎 Hold on, you're already generating a {ticker} meme! Wait for it to finish! 💦"
         )
-        logger.info(f"User {user_id} in chat {chat_id} has active request, blocked")
+        logger.info(f"User {user_id} in chat {chat_id} has active request, blocked new attempt")
         return
 
+    # Check per-user rate limit
+    user_ok, _ = await check_user_rate_limit(chat_id, user_id)
+    if not user_ok:
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        await update.message.reply_text(
+            f"Yo, slime fam! 😎 You're going too fast! Wait a bit for the next {ticker} meme drop! 💦"
+        )
+        logger.info(f"User rate limit hit for {key}")
+        return
+
+    # Check global rate limit
+    if not await check_global_rate_limit(context):
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        await update.message.reply_text(
+            f"Yo, slime fam! 😎 The bot's too hot right now! 🔥 Wait a bit for the next {ticker} meme drop! 💦"
+        )
+        logger.info(f"Global rate limit hit for chat {chat_id}")
+        return
+
+    # Check cooldown
+    last_request_time = COOLDOWN_STORAGE.get(key, 0)
+    time_since_last = current_time - last_request_time
+    logger.debug(f"User {user_id} in chat {chat_id}, time since last: {time_since_last:.3f}s, cooldown: {SUIMEME_COOLDOWN}s")
+    if time_since_last < SUIMEME_COOLDOWN or time_since_last < MIN_REQUEST_GAP:
+        cooldown_left = SUIMEME_COOLDOWN - time_since_last if time_since_last < SUIMEME_COOLDOWN else MIN_REQUEST_GAP - time_since_last
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        await update.message.reply_text(
+            f"Yo, slime fam! 😎 Hold on, you're spamming too fast! Wait {cooldown_left:.1f}s for the next {ticker} meme drop! 💦"
+        )
+        logger.info(f"User {user_id} in chat {chat_id} is on cooldown, {cooldown_left:.1f}s remaining")
+        return
+
+    # Set active request flag and update cooldown
+    ACTIVE_REQUESTS[key] = True
+    COOLDOWN_STORAGE[key] = current_time
+    logger.debug(f"Updated cooldown timestamp and set active request for {key}: {current_time}")
+
     try:
-        ACTIVE_REQUESTS[key] = True
-
-        # Check per-user rate limit
-        user_ok, _ = await check_user_rate_limit(chat_id, user_id)
-        if not user_ok:
-            ticker = context.chat_data.get('ticker', '$SUIMEME')
-            await update.message.reply_text(
-                f"Yo, slime fam! 😎 You're going too fast! Wait a bit for the next {ticker} meme drop! 💦"
-            )
-            logger.info(f"User rate limit hit for {key}")
-            return
-
-        # Check global rate limit
-        if not await check_global_rate_limit(context):
-            ticker = context.chat_data.get('ticker', '$SUIMEME')
-            await update.message.reply_text(
-                f"Yo, slime fam! 😎 The bot's too hot right now! 🔥 Wait a bit for the next {ticker} meme drop! 💦"
-            )
-            logger.info(f"Global rate limit hit for chat {chat_id}")
-            return
-
-        # Check cooldown
-        last_request_time = COOLDOWN_STORAGE.get(key, 0)
-        time_since_last = current_time - last_request_time
-        logger.debug(f"User {user_id} in chat {chat_id}, time since last: {time_since_last:.3f}s, cooldown: {SUIMEME_COOLDOWN}s")
-        if time_since_last < SUIMEME_COOLDOWN or time_since_last < MIN_REQUEST_GAP:
-            cooldown_left = SUIMEME_COOLDOWN - time_since_last if time_since_last < SUIMEME_COOLDOWN else MIN_REQUEST_GAP - time_since_last
-            ticker = context.chat_data.get('ticker', '$SUIMEME')
-            await update.message.reply_text(
-                f"Yo, slime fam! 😎 Hold on, you're spamming too fast! Wait {cooldown_left:.1f}s for the next {ticker} meme drop! 💦"
-            )
-            logger.info(f"User {user_id} in chat {chat_id} is on cooldown, {cooldown_left:.1f}s remaining")
-            return
-
-        # Update cooldown
-        COOLDOWN_STORAGE[key] = current_time
-        logger.debug(f"Updated cooldown timestamp for {key}: {current_time}")
-
         # Initialize default settings
         if 'main_character' not in context.chat_data:
             context.chat_data['main_character'] = "Blue Slime King"
@@ -607,6 +606,12 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.chat.send_action(ChatAction.TYPING)
         await asyncio.sleep(TYPING_DELAY)
 
+        # Send generating message ONCE
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        generating_msg = await update.message.reply_text(f"Generating your {ticker} meme")
+        logger.debug(f"Sent generating message for user {user_id} in chat {chat_id}")
+
+        # Parse user input
         args = context.args or []
         user_input = " ".join(args).strip().lower()
         logger.debug(f"Raw user input: {user_input}")
@@ -686,22 +691,27 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 description = description_input
             logger.debug(f"Parsed - Description: {description}, Scene: {scene}, Color: {color}, Custom Text: {custom_text}, Additional Characters: {additional_characters}, Object: {object_sitting}")
 
-        ticker = context.chat_data.get('ticker', '$SUIMEME')
-        await update.message.reply_text(f"Generating your {ticker} meme")
+        # Generate prompt and image
         prompt = generate_meme_prompt(description, scene, custom_text, color, additional_characters, theme, context.chat_data)
         if object_sitting:
             prompt = prompt.replace(f"sitting confidently on {random.choice(objects)}", f"sitting confidently on {object_sitting}")
+        logger.debug(f"Final prompt for image generation: {prompt}")
         image_url, error = await generate_image(prompt)
+        
         if error:
-            logger.error(f"Failed to generate image: {error}")
-            await update.message.reply_text(f"Oops, failed to generate meme: {error}")
+            logger.error(f"Failed to generate image for user {user_id} in chat {chat_id}: {error}")
+            await generating_msg.reply_text(f"Oops, failed to generate meme: {error}")
             return
-        logger.info(f"Successfully generated image: {image_url}")
-        await update.message.reply_photo(
+        logger.info(f"Successfully generated image for user {user_id} in chat {chat_id}: {image_url}")
+        await generating_msg.reply_photo(
             photo=image_url,
             caption=f"{ticker} Meme: {prompt}"
         )
 
+    except Exception as e:
+        logger.error(f"Unexpected error in suimeme for user {user_id} in chat {chat_id}: {str(e)}")
+        await update.message.reply_text(f"Oops, slime failed! 😅 Error: {str(e)}. Try again!")
+        
     finally:
         ACTIVE_REQUESTS[key] = False
         logger.debug(f"Released active request lock for {key}")
