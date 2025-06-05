@@ -23,8 +23,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Access variables
-
 
 # Configuration
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
