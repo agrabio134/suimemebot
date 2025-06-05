@@ -5,6 +5,8 @@ import asyncio
 import logging
 import json
 import re
+import os
+import fcntl
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberAdministrator, ChatMemberOwner
 from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -14,7 +16,6 @@ import time
 from googlesearch import search
 import validators
 from dotenv import load_dotenv
-import os
 
 # Set up logging
 logging.basicConfig(
@@ -23,7 +24,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
+# Load environment variables
+load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 OWNER_ID = os.getenv("OWNER_ID")
@@ -404,7 +406,6 @@ async def handle_token_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"Yo, slime! 😅 The token must be a 10-character code with only uppercase letters and digits. Try again by replying with a valid token for {group_name}."
             )
             logger.info(f"User {user_id} provided malformed token {token} for chat {group_chat_id}")
-            # Schedule deletion of user's token attempt and bot's response
             if context.job_queue:
                 context.job_queue.run_once(
                     lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, [update.message.message_id, msg.message_id])),
@@ -429,7 +430,6 @@ async def handle_token_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             msg = await update.message.reply_text(welcome_msg)
             logger.info(f"User {user_id} approved for chat {group_chat_id} with token {token}")
-            # Schedule deletion of user's token attempt, bot's initial request, and bot's response
             request_msg_id = context.user_data['awaiting_token'].get('request_message_id')
             messages_to_delete = [update.message.message_id]
             if request_msg_id:
@@ -450,7 +450,6 @@ async def handle_token_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"Yo, slime! 😅 Invalid or blocklisted token. Reply with another 10-character token for {group_name}."
             )
             logger.info(f"User {user_id} provided invalid or blocklisted token {token} for chat {group_chat_id}")
-            # Schedule deletion of user's token attempt and bot's response
             if context.job_queue:
                 context.job_queue.run_once(
                     lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, [update.message.message_id, msg.message_id])),
@@ -545,52 +544,53 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_time = time.time()
 
     # Check if user is already processing a request
-    if key in ACTIVE_REQUESTS and ACTIVE_REQUESTS[key]:
+    if ACTIVE_REQUESTS.get(key, False):
         ticker = context.chat_data.get('ticker', '$SUIMEME')
         await update.message.reply_text(
             f"Yo, slime fam! 😎 Hold on, you're already generating a {ticker} meme! Wait for it to finish! 💦"
         )
-        logger.info(f"User {user_id} in chat {chat_id} has active request, blocked new attempt")
+        logger.info(f"User {user_id} in chat {chat_id} has active request, blocked")
         return
-
-    # Check per-user rate limit
-    user_ok, _ = await check_user_rate_limit(chat_id, user_id)
-    if not user_ok:
-        ticker = context.chat_data.get('ticker', '$SUIMEME')
-        await update.message.reply_text(
-            f"Yo, slime fam! 😎 You're going too fast! Wait a bit for the next {ticker} meme drop! 💦"
-        )
-        logger.info(f"User rate limit hit for {key}")
-        return
-
-    # Check global rate limit
-    if not await check_global_rate_limit(context):
-        ticker = context.chat_data.get('ticker', '$SUIMEME')
-        await update.message.reply_text(
-            f"Yo, slime fam! 😎 The bot's too hot right now! 🔥 Wait a bit for the next {ticker} meme drop! 💦"
-        )
-        logger.info(f"Global rate limit hit for chat {chat_id}")
-        return
-
-    # Check cooldown
-    last_request_time = COOLDOWN_STORAGE.get(key, 0)
-    time_since_last = current_time - last_request_time
-    logger.debug(f"User {user_id} in chat {chat_id}, time since last: {time_since_last:.3f}s, cooldown: {SUIMEME_COOLDOWN}s")
-    if time_since_last < SUIMEME_COOLDOWN or time_since_last < MIN_REQUEST_GAP:
-        cooldown_left = SUIMEME_COOLDOWN - time_since_last if time_since_last < SUIMEME_COOLDOWN else MIN_REQUEST_GAP - time_since_last
-        ticker = context.chat_data.get('ticker', '$SUIMEME')
-        await update.message.reply_text(
-            f"Yo, slime fam! 😎 Hold on, you're spamming too fast! Wait {cooldown_left:.1f}s for the next {ticker} meme drop! 💦"
-        )
-        logger.info(f"User {user_id} in chat {chat_id} is on cooldown, {cooldown_left:.1f}s remaining")
-        return
-
-    # Set active request flag and update cooldown
-    ACTIVE_REQUESTS[key] = True
-    COOLDOWN_STORAGE[key] = current_time
-    logger.debug(f"Updated cooldown timestamp and set active request for {key}: {current_time}")
 
     try:
+        ACTIVE_REQUESTS[key] = True
+
+        # Check per-user rate limit
+        user_ok, _ = await check_user_rate_limit(chat_id, user_id)
+        if not user_ok:
+            ticker = context.chat_data.get('ticker', '$SUIMEME')
+            await update.message.reply_text(
+                f"Yo, slime fam! 😎 You're going too fast! Wait a bit for the next {ticker} meme drop! 💦"
+            )
+            logger.info(f"User rate limit hit for {key}")
+            return
+
+        # Check global rate limit
+        if not await check_global_rate_limit(context):
+            ticker = context.chat_data.get('ticker', '$SUIMEME')
+            await update.message.reply_text(
+                f"Yo, slime fam! 😎 The bot's too hot right now! 🔥 Wait a bit for the next {ticker} meme drop! 💦"
+            )
+            logger.info(f"Global rate limit hit for chat {chat_id}")
+            return
+
+        # Check cooldown
+        last_request_time = COOLDOWN_STORAGE.get(key, 0)
+        time_since_last = current_time - last_request_time
+        logger.debug(f"User {user_id} in chat {chat_id}, time since last: {time_since_last:.3f}s, cooldown: {SUIMEME_COOLDOWN}s")
+        if time_since_last < SUIMEME_COOLDOWN or time_since_last < MIN_REQUEST_GAP:
+            cooldown_left = SUIMEME_COOLDOWN - time_since_last if time_since_last < SUIMEME_COOLDOWN else MIN_REQUEST_GAP - time_since_last
+            ticker = context.chat_data.get('ticker', '$SUIMEME')
+            await update.message.reply_text(
+                f"Yo, slime fam! 😎 Hold on, you're spamming too fast! Wait {cooldown_left:.1f}s for the next {ticker} meme drop! 💦"
+            )
+            logger.info(f"User {user_id} in chat {chat_id} is on cooldown, {cooldown_left:.1f}s remaining")
+            return
+
+        # Update cooldown
+        COOLDOWN_STORAGE[key] = current_time
+        logger.debug(f"Updated cooldown timestamp for {key}: {current_time}")
+
         # Initialize default settings
         if 'main_character' not in context.chat_data:
             context.chat_data['main_character'] = "Blue Slime King"
@@ -1065,16 +1065,24 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error sending error message: {e}")
 
+# Acquire lock to prevent multiple instances
+def acquire_lock():
+    lock_file = open("bot.lock", "w")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return lock_file
+    except IOError:
+        logger.error("Another bot instance is running")
+        exit(1)
+
 def main():
     if not TELEGRAM_TOKEN or not REPLICATE_API_TOKEN or not OWNER_ID:
         logger.error("Missing TELEGRAM_TOKEN, REPLICATE_API_TOKEN, or OWNER_ID")
         return
 
+    lock = acquire_lock()
     tokens = load_or_generate_tokens()
-    print("Generated/Loaded Tokens for the Owner:")
-    for token in tokens:
-        print(token)
-    logger.info("Tokens printed for owner")
+    logger.info("Tokens loaded/generated")
 
     # Build the application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -1096,8 +1104,21 @@ def main():
     application.add_error_handler(error_handler)
     
     logger.info("Bot starting...")
-    # Run the bot using the built-in polling mechanism
-    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(application.initialize())
+        loop.run_until_complete(application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True))
+    except KeyboardInterrupt:
+        logger.info("Bot interrupted, shutting down...")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+    finally:
+        loop.run_until_complete(application.shutdown())
+        if not loop.is_closed():
+            loop.close()
+        lock.close()
+        os.remove("bot.lock")
+        logger.info("Bot shutdown complete.")
 
 if __name__ == "__main__":
     main()
