@@ -4,6 +4,7 @@ import asyncio
 import logging
 import json
 import re
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberAdministrator, ChatMemberOwner
 from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -12,7 +13,8 @@ import functools
 import time
 from googlesearch import search
 import validators
-
+import validators
+from dotenv import load_dotenv
 # Set up logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -20,8 +22,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = "8169411740:AAHvtP4nQ4Bi_qhCs1Gp4I7iji4stIbilMc"
-REPLICATE_API_TOKEN = "r8_Fm9w2OsgrCwe3WNCnoKRWWPFfQh01Nm4IR5NZ"
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 
 # Load responses and dynamic words
 try:
