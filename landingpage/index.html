@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="SUIMEMEBOT - Craft vibrant, customizable underwater memes with $SUIMEME on the Sui blockchain!">
+    <title>SUIMEMEBOT - Underwater Meme Magic</title>
+    <link href="https://fonts.googleapis.com/css2?family=Bubblegum+Sans&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <style>
+        :root {
+            --bg-primary: #1E40AF;
+            --bg-secondary: #3B82F6;
+            --accent-light: #93C5FD;
+            --accent-dark: #1E3A8A;
+            --highlight: #FFDD00;
+            --content-bg: #DBEAFE;
+            --text-primary: #1E40AF;
+            --text-secondary: #2563EB;
+            --shadow: rgba(30, 64, 175, 0.3);
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Bubblegum Sans', cursive;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+            font-size: 1.6rem;
+        }
+        .layout {
+            display: grid;
+            grid-template-columns: 250px 1fr;
+            min-height: 100vh;
+        }
+        .sidebar {
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(15px);
+            padding: 2rem 1.2rem;
+            box-shadow: 3px 0 12px var(--shadow);
+            z-index: 1000;
+        }
+        .sidebar .logo {
+            font-size: 2.8rem;
+            font-weight: 700;
+            color: var(--highlight);
+            text-align: center;
+            margin-bottom: 2rem;
+            text-shadow: 2px 2px 6px var(--shadow);
+        }
+        .sidebar ul {
+            list-style: none;
+        }
+        .sidebar ul li {
+            margin-bottom: 1.2rem;
+        }
+        .sidebar ul li a {
+            color: var(--accent-light);
+            text-decoration: none;
+            font-size: 1.8rem;
+            font-weight: 500;
+            transition: color 0.3s ease, background 0.3s ease;
+            display: flex;
+            align-items: center;
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
+        }
+        .sidebar ul li a i {
+            margin-right: 0.6rem;
+            font-size: 1.6rem;
+        }
+        .sidebar ul li a:hover {
+            color: var(--highlight);
+            background: rgba(255, 255, 255, 0.3);
+        }
+        .main-content {
+            padding: 3rem;
+        }
+        header {
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background: url('https://via.placeholder.com/1920x1080?text=Slime+King+Header') no-repeat center center/cover;
+            border-radius: 20px;
+            position: relative;
+            margin-bottom: 3rem;
+        }
+        header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(30, 64, 175, 0.5);
+            border-radius: 20px;
+            z-index: 1;
+        }
+        header h1, header p, header .social-links {
+            position: relative;
+            z-index: 2;
+        }
+        header h1 {
+            font-size: 5rem;
+            font-weight: 700;
+            color: var(--highlight);
+            text-shadow: 3px 3px 10px var(--shadow);
+            margin-bottom: 1.5rem;
+            animation: slideIn 1.5s ease-out;
+        }
+        header p {
+            font-size: 2.2rem;
+            color: var(--accent-light);
+            max-width: 900px;
+            margin-bottom: 2rem;
+        }
+        header .social-links {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+        header .social-links a {
+            color: var(--accent-light);
+            font-size: 2.5rem;
+            transition: color 0.3s ease;
+        }
+        header .social-links a:hover {
+            color: var(--highlight);
+        }
+        header .social-links .copyable {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(255, 255, 255, 0.5);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1.6rem;
+            color: var(--text-primary);
+            text-decoration: none;
+        }
+        header .social-links .copyable:hover {
+            background: rgba(255, 255, 255, 0.8);
+        }
+        @keyframes slideIn {
+            from { transform: translateY(60px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        section {
+            background: var(--content-bg);
+            padding: 3rem;
+            margin-bottom: 3rem;
+            border-radius: 20px;
+            box-shadow: 0 8px 25px var(--shadow);
+            position: relative;
+            overflow: hidden;
+        }
+        .section-title {
+            font-size: 3.5rem;
+            color: var(--text-primary);
+            margin-bottom: 2rem;
+            text-align: center;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .section-title i {
+            margin-right: 0.6rem;
+            color: var(--highlight);
+            font-size: 2.8rem;
+        }
+        .section-title::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 4px;
+            background: var(--highlight);
+            border-radius: 3px;
+        }
+        .bot-docs p {
+            font-size: 1.8rem;
+            color: var(--text-primary);
+            margin-bottom: 1.5rem;
+            text-align: center;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .bot-docs ul, .commands-list ul {
+            list-style: none;
+            text-align: left;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .bot-docs ul li, .commands-list ul li {
+            position: relative;
+            font-size: 1.8rem;
+            margin-bottom: 1.2rem;
+            color: var(--text-primary);
+            padding-left: 2.5rem;
+        }
+        .commands-list ul {
+            display: flex;
+            flex-direction: column;
+            gap: 1.2rem;
+        }
+        .bot-docs ul li i, .commands-list ul li i {
+            position: absolute;
+            left: 0;
+            color: var(--accent-light);
+            font-size: 1.6rem;
+            top: 0.3rem;
+        }
+        .commands-list .command {
+            font-size: 2rem;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        .code {
+            background: #e8ecef;
+            padding: 0.3rem 0.6rem;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 1.6rem;
+            color: var(--text-primary);
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2.5rem;
+            margin-top: 2rem;
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.97);
+            padding: 2rem;
+            border-radius: 15px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            text-align: center;
+        }
+        .card:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 30px var(--shadow);
+        }
+        .placeholder {
+            width: 100%;
+            height: 200px;
+            background: var(--accent-dark);
+            border: 3px dashed var(--highlight);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--content-bg);
+            font-size: 1.8rem;
+            font-style: italic;
+            margin-bottom: 1.5rem;
+        }
+        .card p {
+            font-size: 1.6rem;
+            color: var(--text-secondary);
+        }
+        .plan h3 {
+            font-size: 2.2rem;
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+        }
+        .plan p {
+            font-size: 1.6rem;
+            color: var(--text-primary);
+            margin: 0.6rem 0;
+        }
+        .plan .price {
+            font-size: 1.8rem;
+            color: #2ECC71;
+        }
+        .plan .coming-soon {
+            color: var(--text-secondary);
+            font-size: 1.6rem;
+            font-style: italic;
+        }
+        .plan button {
+            background-color: var(--text-secondary);
+            color: var(--content-bg);
+            border: none;
+            padding: 1rem 1.5rem;
+            border-radius: 10px;
+            cursor: default;
+            width: 100%;
+            margin-top: 1.5rem;
+            opacity: 0.7;
+            font-size: 1.8rem;
+            transition: opacity 0.3s ease;
+        }
+        .plan button:hover {
+            opacity: 0.9;
+        }
+        .links-grid {
+            text-align: center;
+        }
+        .links-grid a {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 1.2rem 0;
+            color: var(--text-primary);
+            font-size: 1.8rem;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        .links-grid a i {
+            margin-right: 0.6rem;
+            color: var(--accent-light);
+            font-size: 1.6rem;
+        }
+        .links-grid a:hover {
+            color: var(--highlight);
+        }
+        .links-grid a.copyable {
+            background: rgba(255, 255, 255, 0.5);
+            padding: 0.8rem;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        .links-grid a.copyable:hover {
+            background: rgba(255, 255, 255, 0.8);
+        }
+        footer {
+            text-align: center;
+            padding: 2.5rem;
+            background: var(--bg-primary);
+            color: var(--accent-light);
+            font-size: 1.6rem;
+            border-top: 3px solid var(--highlight);
+        }
+        .wave {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100px;
+            background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 320'%3E%3Cpath fill='%2393C5FD' fill-opacity='0.5' d='M0,96L48,112C96,128,192,160,288,160C384,160,480,128,576,112C672,96,768,96,864,112C960,128,1056,160,1152,176C1248,192,1344,192,1392,192L1440,192L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z'%3E%3C/path%3E%3C/svg%3E") repeat-x;
+            animation: waveAnimation 8s linear infinite;
+        }
+        @keyframes waveAnimation {
+            0% { background-position-x: 0; }
+            100% { background-position-x: 1440px; }
+        }
+        .features {
+            margin-top: 2.5rem;
+        }
+        .features h3 {
+            font-size: 2rem;
+            color: var(--text-primary);
+            margin-bottom: 1.2rem;
+            text-align: center;
+        }
+        .features ul {
+            max-width: 800px;
+            margin: 0 auto;
+            list-style: none;
+        }
+        .features ul li {
+            font-size: 1.6rem;
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+            padding-left: 2.5rem;
+            position: relative;
+        }
+        .features ul li i {
+            position: absolute;
+            left: 0;
+            color: var(--accent-light);
+            font-size: 1.6rem;
+            top: 0.3rem;
+        }
+        @media (max-width: 1024px) {
+            .layout {
+                grid-template-columns: 200px 1fr;
+            }
+            .sidebar {
+                padding: 1.5rem 1rem;
+            }
+            .sidebar .logo {
+                font-size: 2.5rem;
+            }
+            .sidebar ul li a {
+                font-size: 1.6rem;
+            }
+            .sidebar ul li a i {
+                font-size: 1.4rem;
+            }
+            .main-content {
+                padding: 2.5rem;
+            }
+            header h1 {
+                font-size: 4.5rem;
+            }
+            header p {
+                font-size: 2rem;
+            }
+            header .social-links {
+                font-size: 2rem;
+                gap: 1rem;
+            }
+            .section-title {
+                font-size: 3rem;
+            }
+            .section-title i {
+                font-size: 2.5rem;
+            }
+            .bot-docs p, .card p, .plan p, .links-grid a {
+                font-size: 1.6rem;
+            }
+            .bot-docs ul li, .commands-list ul li {
+                font-size: 1.6rem;
+            }
+            .commands-list .command {
+                font-size: 1.8rem;
+            }
+            .code {
+                font-size: 1.4rem;
+            }
+            .placeholder {
+                height: 180px;
+                font-size: 1.6rem;
+            }
+            .plan .price {
+                font-size: 1.6rem;
+            }
+            .plan button {
+                font-size: 1.6rem;
+            }
+            footer {
+                font-size: 1.4rem;
+            }
+        }
+        @media (max-width: 768px) {
+            .layout {
+                grid-template-columns: 1fr;
+            }
+            .sidebar {
+                position: static;
+                height: auto;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                flex-wrap: wrap;
+                padding: 1.2rem;
+            }
+            .sidebar .logo {
+                font-size: 2.2rem;
+                margin-bottom: 0;
+            }
+            .sidebar ul {
+                display: none;
+                width: 100%;
+                padding: 1.2rem 0;
+            }
+            .sidebar ul.active {
+                display: block;
+            }
+            .sidebar ul li {
+                margin-bottom: 1rem;
+                text-align: center;
+            }
+            .sidebar ul li a {
+                font-size: 1.5rem;
+                padding: 0.5rem 0.8rem;
+            }
+            .sidebar ul li a i {
+                font-size: 1.3rem;
+            }
+            .sidebar .menu-toggle {
+                display: block;
+                font-size: 2.2rem;
+                color: var(--accent-light);
+                cursor: pointer;
+            }
+            .main-content {
+                padding: 1.5rem;
+            }
+            header {
+                height: 60vh;
+            }
+            header h1 {
+                font-size: 3.5rem;
+            }
+            header p {
+                font-size: 1.8rem;
+            }
+            header .social-links {
+                font-size: 1.8rem;
+                gap: 0.8rem;
+            }
+            .section-title {
+                font-size: 2.5rem;
+            }
+            .section-title i {
+                font-size: 2rem;
+            }
+            .bot-docs p, .card p, .plan p, .links-grid a {
+                font-size: 1.5rem;
+            }
+            .bot-docs ul li, .commands-list ul li {
+                font-size: 1.5rem;
+                padding-left: 2rem;
+            }
+            .commands-list .command {
+                font-size: 1.6rem;
+            }
+            .code {
+                font-size: 1.3rem;
+            }
+            .grid {
+                grid-template-columns: 1fr;
+                gap: 1.5rem;
+            }
+            .placeholder {
+                height: 160px;
+                font-size: 1.5rem;
+            }
+            .plan .price {
+                font-size: 1.5rem;
+            }
+            .plan button {
+                font-size: 1.5rem;
+                padding: 0.8rem 1.2rem;
+            }
+            .features h3 {
+                font-size: 1.8rem;
+            }
+            .features ul li {
+                font-size: 1.5rem;
+                padding-left: 2rem;
+            }
+            footer {
+                font-size: 1.3rem;
+                padding: 1.5rem;
+            }
+        }
+        @media (max-width: 480px) {
+            .sidebar .logo {
+                font-size: 2rem;
+            }
+            .sidebar ul li a {
+                font-size: 1.4rem;
+            }
+            .sidebar ul li a i {
+                font-size: 1.2rem;
+            }
+            .sidebar .menu-toggle {
+                font-size: 2rem;
+            }
+            header h1 {
+                font-size: 3rem;
+            }
+            header p {
+                font-size: 1.6rem;
+            }
+            header .social-links {
+                font-size: 1.6rem;
+            }
+            .section-title {
+                font-size: 2.2rem;
+            }
+            .section-title i {
+                font-size: 1.8rem;
+            }
+            .bot-docs p, .card p, .plan p, .links-grid a, .bot-docs ul li, .commands-list ul li {
+                font-size: 1.4rem;
+            }
+            .commands-list .command {
+                font-size: 1.5rem;
+            }
+            .code {
+                font-size: 1.2rem;
+            }
+            .placeholder {
+                height: 140px;
+                font-size: 1.4rem;
+            }
+            .plan .price {
+                font-size: 1.4rem;
+            }
+            .plan button {
+                font-size: 1.4rem;
+            }
+            .features h3 {
+                font-size: 1.6rem;
+            }
+            .features ul li {
+                font-size: 1.4rem;
+            }
+            footer {
+                font-size: 1.2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo">SUIMEMEBOT</div>
+            <ul>
+                <li><a href="#about"><i class="fas fa-info-circle"></i> About</a></li>
+                <li><a href="#commands"><i class="fas fa-terminal"></i> Commands</a></li>
+                <li><a href="#customization"><i class="fas fa-paint-brush"></i> Customization</a></li>
+                <li><a href="#features"><i class="fas fa-star"></i> Features</a></li>
+                <li><a href="#gallery"><i class="fas fa-images"></i> Gallery</a></li>
+                <li><a href="#samples"><i class="fas fa-image"></i> Samples</a></li>
+                <li><a href="#plans"><i class="fas fa-gem"></i> Plans</a></li>
+                <li><a href="#links"><i class="fas fa-link"></i> Links</a></li>
+            </ul>
+            <div class="menu-toggle"><i class="fas fa-bars"></i></div>
+        </aside>
+
+        <main class="main-content">
+            <header>
+                <h1><i class="fas fa-crown"></i> Welcome to <span class="highlight">SUIMEMEBOT</span></h1>
+                <p><i class="fas fa-water"></i> Create vibrant, customizable underwater memes with $SUIMEME on the Sui blockchain! Personalize your meme adventure! 💧😎</p>
+                <div class="social-links">
+                    <a href="#" class="copyable" onclick="navigator.clipboard.writeText('0xeded589fe72aef12b3b22a826723854820c8480023f3a0ef49460f8429b8d080'); alert('Contract Address copied!'); return false;"><i class="fas fa-copy"></i> 0xeded589fe72aef…49460f8429b8d080</a>
+                    <a href="https://t.me/suimeme" target="_blank"><i class="fab fa-telegram-plane"></i></a>
+                    <a href="https://x.com/sui_meme_sui" target="_blank"><i class="fab fa-twitter"></i></a>
+                </div>
+            </header>
+
+            <section id="about" class="bot-docs">
+                <h2 class="section-title"><i class="fas fa-info-circle"></i> About SUIMEMEBOT</h2>
+                <p><span class="highlight">SUIMEMEBOT</span> is a Telegram-based bot that lets you craft unique, customizable unique-themed memes powered by the $SUIMEME token on the Sui blockchain. Led by the Blue Slime King, it fuses meme culture with blockchain tech, offering endless creative possibilities.</p>
+                <p>Using the Replicate API, SUIMEMEBOT generates vibrant, high-quality memes tailored to your preferences—choose your scenes, characters, colors, and more. Perfect for hyping $SUIMEME or chilling with the slime crew in the Sui ecosystem.</p>
+                <p>Whether you’re a crypto trader, meme artist, or $SUIMEME fan, SUIMEMEBOT lets you personalize your meme-making journey. Customize, create, and dive into the fun!</p>
+                <div class="wave"></div>
+            </section>
+
+            <section id="commands" class="commands-list">
+                <h2 class="section-title"><i class="fas fa-terminal"></i> Available Commands</h2>
+                <p>Use these Telegram commands to interact with SUIMEMEBOT and unleash your custom memes. Designed for ease and maximum creativity!</p>
+                <ul>
+                    <li>
+                        <div class="command"><i class="fas fa-play"></i> <span class="code">/start</span></div>
+                        Kicks off your journey with SUIMEMEBOT, welcoming you to the slime crew and showing all commands with customization options.
+                    </li>
+                    <li>
+                        <div class="command"><i class="fas fa-image"></i> <span class="code">/SUIMEME [scene] [text]</span></div>
+                        Creates a meme with the Blue Slime King (or your custom character) in a chosen scene, with optional text (e.g., <span class="code">/SUIMEME underwater "Slime Vibes!"</span>).
+                    </li>
+                    <li>
+                        <div class="command"><i class="fas fa-cog"></i> <span class="code">/settings</span></div>
+                        Lets you personalize group settings, like picking a custom character, ticker, colors, or themes, via an interactive menu.
+                    </li>
+                    <li>
+                        <div class="command"><i class="fas fa-hand-sparkles"></i> <span class="code">/sup</span></div>
+                        Drops a fun, $SUIMEME-themed greeting from the Blue Slime King to keep the vibes flowing.
+                    </li>
+                    <li>
+                        <div class="command"><i class="fas fa-question"></i> <span class="code">/how</span> or <span class="code">/help</span></div>
+                        Guides you through using SUIMEMEBOT, including tips for customizing and creating memes.
+                    </li>
+                </ul>
+                <div class="wave"></div>
+            </section>
+
+            <section id="customization" class="customization">
+                <h2 class="section-title"><i class="fas fa-paint-brush"></i> Customization Options</h2>
+                <p>Make SUIMEMEBOT yours! Tailor your meme-making experience to match your unique style and preferences.</p>
+                <ul>
+                    <li><i class="fas fa-palette"></i> <strong>Custom Themes</strong>: Choose colors for scenes and text to reflect your vibe, like blue ocean tones or neon glows.</li>
+                    <li><i class="fas fa-user-edit"></i> <strong>Character Selection</strong>: Swap the Blue Slime King for other characters, like Pepe or your own designs.</li>
+                    <li><i class="fas fa-font"></i> <strong>Text Styling</strong>: Add custom quotes or $SUIMEME slogans with personalized fonts and effects.</li>
+                    <li><i class="fas fa-cogs"></i> <strong>Group Settings</strong>: Use <span class="code">/settings</span> to save your group’s preferences, like custom tickers or social links.</li>
+                    <li><i class="fas fa-star"></i> <strong>Dynamic Scenes</strong>: Pick from underwater, space, or other themes, with real-time tweaks via the Replicate API.</li>
+                </ul>
+                <p>Use <span class="code">/settings</span> to explore and apply these options, making every meme a one-of-a-kind $SUIMEME creation!</p>
+                <div class="wave"></div>
+            </section>
+
+            <section id="features" class="features">
+                <h2 class="section-title"><i class="fas fa-star"></i> Key Features</h2>
+                <p>Why SUIMEMEBOT is the ultimate meme-making tool for $SUIMEME fans!</p>
+                <h3>Why Choose SUIMEMEBOT?</h3>
+                <ul>
+                    <li><i class="fas fa-paint-brush"></i> <strong>Endless Customization</strong>: Personalize scenes, colors, characters, and themes to create memes your way.</li>
+                    <li><i class="fas fa-bolt"></i> <strong>High-Quality Memes</strong>: Powered by Replicate API for stunning, professional-grade visuals.</li>
+                    <li><i class="fas fa-water"></i> <strong>Underwater Vibes</strong>: Dive into the $SUIMEME aquatic theme with the Blue Slime King.</li>
+                    <li><i class="fas fa-cogs"></i> <strong>Smart Settings</strong>: Customize group preferences with <span class="code">/settings</span> for a tailored experience.</li>
+                    <li><i class="fas fa-search"></i> <strong>Dynamic Creation</strong>: Auto-fetches relevant content to boost meme creativity.</li>
+                    <li><i class="fas fa-shield-alt"></i> <strong>Spam Protection</strong>: 5-second cooldown ensures fair use for all users.</li>
+                </ul>
+                <div class="wave"></div>
+            </section>
+
+            <section id="gallery" class="memes-gallery">
+                <h2 class="section-title"><i class="fas fa-images"></i> Meme Gallery</h2>
+                <p>Check out these custom-crafted memes by the $SUIMEME fam, showing off SUIMEMEBOT’s creative flexibility!</p>
+                <div class="grid">
+                    <div class="card">
+                        <div class="placeholder">Placeholder: Custom Meme 1</div>
+                        <p>Blue Slime King rocking a custom underwater party with $SUIMEME banner!</p>
+                    </div>
+                    <div class="card">
+                        <div class="placeholder">Placeholder: Custom Meme 2</div>
+                        <p>Pepe in a user-designed neon ocean with “$SUIMEME to the Moon!”</p>
+                    </div>
+                    <div class="card">
+                        <div class="placeholder">Placeholder: Custom Meme 3</div>
+                        <p>Fireworks scene with custom colors and $SUIMEME vibes!</p>
+                    </div>
+                    <div class="card">
+                        <div class="placeholder">Placeholder: Custom Meme 4</div>
+                        <p>Slime King in a user-chosen space theme with “LFG $SUIMEME!”</p>
+                    </div>
+                </div>
+                <div class="wave"></div>
+            </section>
+
+            <section id="samples" class="bot-samples">
+                <h2 class="section-title"><i class="fas fa-image"></i> Generated Samples</h2>
+                <p>Explore these sample memes made with <span class="code">/SUIMEME</span>, showcasing custom user inputs!</p>
+                <div class="grid">
+                    <div class="card">
+                        <div class="placeholder">Placeholder: Sample Custom 1</div>
+                        <p>Blue Slime King on a custom golden throne with user’s “LFG $SUIMEME!” in neon blue.</p>
+                    </div>
+                    <div class="card">
+                        <div class="placeholder">Placeholder: Sample Custom 2</div>
+                        <p>User-customized underwater fireworks with $SUIMEME and a vibrant purple palette.</p>
+                    </div>
+                    <div class="card">
+                        <div class="placeholder">Placeholder: Sample Custom 3</div>
+                        <p>Custom Slime King and Wojak in a user-designed WWE ring with bold text.</p>
+                    </div>
+                </div>
+                <div class="wave"></div>
+            </section>
+
+            <section id="plans" class="subscription-plans">
+                <h2 class="section-title"><i class="fas fa-gem"></i> Subscription Plans</h2>
+                <p>Unlock premium customization and meme-making features with these upcoming plans, payable in $SUIMEME tokens.</p>
+                <div class="grid">
+                    <div class="card plan">
+                        <h3>24-Hour Access</h3>
+                        <p>Duration: 24 Hours</p>
+                        <p class="price">10 $SUIMEME</p>
+                        <p class="coming-soon">Coming Soon</p>
+                        <button disabled>Subscribe</button>
+                    </div>
+                    <div class="card plan">
+                        <h3>3-Day Access</h3>
+                        <p>Duration: 3 Days</p>
+                        <p class="price">25 $SUIMEME</p>
+                        <p class="coming-soon">Coming Soon</p>
+                        <button disabled>Subscribe</button>
+                    </div>
+                    <div class="card plan">
+                        <h3>1-Week Access</h3>
+                        <p>Duration: 7 Days</p>
+                        <p class="price">50 $SUIMEME</p>
+                        <p class="coming-soon">Coming Soon</p>
+                        <button disabled>Subscribe</button>
+                    </div>
+                </div>
+                <div class="wave"></div>
+            </section>
+
+            <section id="links" class="links">
+                <h2 class="section-title"><i class="fas fa-link"></i> Connect With Us</h2>
+                <p>Join the $SUIMEME community and share your custom memes!</p>
+                <div class="links-grid">
+                    <a href="#" class="copyable" onclick="navigator.clipboard.writeText('0xeded589fe72aef12b3b22a826723854820c8480023f3a0ef49460f8429b8d080'); alert('Contract Address copied!'); return false;"><i class="fas fa-copy"></i> Contract Address: 0xeded589fe72aef…49460f8429b8d080</a>
+                    <a href="https://t.me/suimeme" target="_blank"><i class="fab fa-telegram-plane"></i> Telegram</a>
+                    <a href="https://x.com/sui_meme_sui" target="_blank"><i class="fab fa-twitter"></i> Twitter/X</a>
+                </div>
+                <div class="wave"></div>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p><i class="fas fa-copyright"></i> © 2025 SUIMEMEBOT. All rights reserved. | Made with <i class="fas fa-tint"></i> by the $SUIMEME Fam</p>
+    </footer>
+
+    <script>
+        const menuToggle = document.querySelector('.menu-toggle');
+        const sidebarUl = document.querySelector('.sidebar ul');
+        menuToggle.addEventListener('click', () => {
+            sidebarUl.classList.toggle('active');
+        });
+    </script>
+</body>
+</html>
