@@ -1,9 +1,12 @@
 import random
+import string
 import httpx
 import asyncio
 import logging
 import json
 import re
+import os
+import fcntl
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberAdministrator, ChatMemberOwner
 from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -12,6 +15,7 @@ import functools
 import time
 from googlesearch import search
 import validators
+from dotenv import load_dotenv
 
 # Set up logging
 logging.basicConfig(
@@ -20,8 +24,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = "8169411740:AAHvtP4nQ4Bi_qhCs1Gp4I7iji4stIbilMc"
-REPLICATE_API_TOKEN = "r8_Fm9w2OsgrCwe3WNCnoKRWWPFfQh01Nm4IR5NZ"
+# Load environment variables
+load_dotenv()
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
+OWNER_ID = os.getenv("OWNER_ID")
+
+# Token storage file
+TOKEN_FILE = "tokens.json"
+TOKENS = {}  # {token: {"status": "whitelisted" or "blocklisted"}}
+
+# Load or generate tokens
+def load_or_generate_tokens():
+    global TOKENS
+    try:
+        with open(TOKEN_FILE, "r", encoding="utf-8") as f:
+            TOKENS = json.load(f)
+        logger.info("Loaded tokens from tokens.json")
+    except FileNotFoundError:
+        logger.info("tokens.json not found, generating 50 new tokens")
+        TOKENS = {
+            ''.join(random.choices(string.ascii_uppercase + string.digits, k=10)): {"status": "whitelisted"}
+            for _ in range(50)
+        }
+        with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+            json.dump(TOKENS, f, indent=4)
+        logger.info("Generated and saved 50 new tokens")
+    return list(TOKENS.keys())
 
 # Load responses and dynamic words
 try:
@@ -78,11 +107,13 @@ GLOBAL_RATE_LIMIT_COUNT = 30  # max requests per minute
 GLOBAL_RATE_LIMIT_WINDOW = 60  # seconds
 USER_RATE_LIMIT_COUNT = 5  # max requests per user per minute
 MIN_REQUEST_GAP = 0.1  # minimum seconds between requests
+TOKEN_MESSAGE_DELETE_DELAY = 30  # seconds to auto-delete token-related messages
 
-# Storage for cooldowns and active requests
+# Storage for cooldowns, active requests, and approved users
 COOLDOWN_STORAGE = {}  # {f"{chat_id}_{user_id}": timestamp}
 ACTIVE_REQUESTS = {}  # {f"{chat_id}_{user_id}": bool}
 USER_REQUEST_COUNTS = {}  # {f"{chat_id}_{user_id}": [timestamps]}
+APPROVED_USERS = {}  # {chat_id: {user_id: True}}
 
 # Placeholder for searching an image URL
 async def search_image_url(ticker):
@@ -180,6 +211,10 @@ async def is_user_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
         logger.error(f"Error checking admin status for user {user_id} in chat {chat_id}: {str(e)}")
         return False
 
+# Check if user is approved in the chat
+async def is_user_approved(chat_id, user_id):
+    return chat_id in APPROVED_USERS and user_id in APPROVED_USERS[chat_id]
+
 # Check global rate limit
 async def check_global_rate_limit(context: ContextTypes.DEFAULT_TYPE) -> bool:
     current_time = time.time()
@@ -228,6 +263,7 @@ async def search_term(term):
         logger.error(f"Search failed for {term}: {str(e)}")
         return term
 
+# Generate meme prompt
 def generate_meme_prompt(description=None, scene=None, custom_text=None, color=None, additional_characters=None, theme=None, chat_data=None):
     main_character = chat_data.get('main_character', "Blue Slime King")
     theme = theme or {
@@ -266,6 +302,7 @@ def generate_meme_prompt(description=None, scene=None, custom_text=None, color=N
     logger.debug(f"Generated prompt: {base_prompt}")
     return base_prompt
 
+# Generate image using Replicate API
 async def generate_image(prompt):
     try:
         url = "https://api.replicate.com/v1/predictions"
@@ -321,12 +358,187 @@ async def generate_image(prompt):
         logger.error(f"Unexpected error in generate_image: {str(e)}")
         return None, f"Unexpected error: {str(e)}"
 
+# Handle new chat members
+@retry_on_timeout(retries=3, delay=1)
+async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        return
+    
+    new_members = update.message.new_chat_members
+    ticker = context.chat_data.get('ticker', '$SUIMEME')
+    
+    for member in new_members:
+        user_id = member.id
+        if user_id == context.bot.id:
+            continue  # Skip the bot itself
+        logger.info(f"New member {user_id} in chat {chat_id}")
+        if chat_id not in APPROVED_USERS:
+            APPROVED_USERS[chat_id] = {}
+        if user_id not in APPROVED_USERS[chat_id]:
+            group_name = update.effective_chat.title or "this group"
+            try:
+                msg = await update.message.reply_text(
+                    f"Yo, slime fam! 😎 Welcome to {group_name}! To use {ticker} bot commands, reply here with a valid 10-character token (uppercase letters and digits). Got one? Send it now!"
+                )
+                context.user_data['awaiting_token'] = {'chat_id': chat_id, 'group_name': group_name, 'request_message_id': msg.message_id}
+                logger.info(f"Requested token from user {user_id} for chat {chat_id}")
+            except TelegramError as e:
+                logger.error(f"Failed to send token request to user {user_id} in chat {chat_id}: {str(e)}")
+
+# Handle token input
+@retry_on_timeout(retries=3, delay=1)
+async def handle_token_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    if 'awaiting_token' not in context.user_data:
+        return
+    
+    token = update.message.text.strip()
+    group_chat_id = context.user_data['awaiting_token']['chat_id']
+    group_name = context.user_data['awaiting_token'].get('group_name', 'the group')
+    ticker = context.chat_data.get('ticker', '$SUIMEME')
+    
+    # Validate token format
+    if len(token) != 10 or not all(c in string.ascii_uppercase + string.digits for c in token):
+        try:
+            msg = await update.message.reply_text(
+                f"Yo, slime! 😅 The token must be a 10-character code with only uppercase letters and digits. Try again by replying with a valid token for {group_name}."
+            )
+            logger.info(f"User {user_id} provided malformed token {token} for chat {group_chat_id}")
+            if context.job_queue:
+                context.job_queue.run_once(
+                    lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, [update.message.message_id, msg.message_id])),
+                    TOKEN_MESSAGE_DELETE_DELAY,
+                    chat_id=chat_id
+                )
+        except TelegramError as e:
+            logger.error(f"Failed to respond to invalid token from user {user_id}: {str(e)}")
+        return
+    
+    # Check token validity
+    if token in TOKENS and TOKENS[token]["status"] == "whitelisted":
+        if group_chat_id not in APPROVED_USERS:
+            APPROVED_USERS[group_chat_id] = {}
+        APPROVED_USERS[group_chat_id][user_id] = True
+        welcome_msg = (
+            f"Yo, slime fam! 😎 Token accepted! Welcome to the {ticker} meme squad in {group_name}! "
+            f"I’m your meme generator bot, here to create wild, vibrant memes featuring {context.chat_data.get('main_character', 'Blue Slime King')} "
+            f"and the {ticker} vibe. Use /SUIMEME to craft custom memes with scenes, colors, and text, /settings to tweak group options, "
+            f"or /how for tips. Let’s make the blockchain bounce! 💦"
+        )
+        try:
+            msg = await update.message.reply_text(welcome_msg)
+            logger.info(f"User {user_id} approved for chat {group_chat_id} with token {token}")
+            request_msg_id = context.user_data['awaiting_token'].get('request_message_id')
+            messages_to_delete = [update.message.message_id]
+            if request_msg_id:
+                messages_to_delete.append(request_msg_id)
+            messages_to_delete.append(msg.message_id)
+            if context.job_queue:
+                context.job_queue.run_once(
+                    lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, messages_to_delete)),
+                    TOKEN_MESSAGE_DELETE_DELAY,
+                    chat_id=chat_id
+                )
+        except TelegramError as e:
+            logger.error(f"Failed to send welcome message to user {user_id}: {str(e)}")
+        del context.user_data['awaiting_token']
+    else:
+        try:
+            msg = await update.message.reply_text(
+                f"Yo, slime! 😅 Invalid or blocklisted token. Reply with another 10-character token for {group_name}."
+            )
+            logger.info(f"User {user_id} provided invalid or blocklisted token {token} for chat {group_chat_id}")
+            if context.job_queue:
+                context.job_queue.run_once(
+                    lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, [update.message.message_id, msg.message_id])),
+                    TOKEN_MESSAGE_DELETE_DELAY,
+                    chat_id=chat_id
+                )
+        except TelegramError as e:
+            logger.error(f"Failed to respond to invalid token from user {user_id}: {str(e)}")
+
+# Helper to delete messages
+async def delete_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_ids: list):
+    for msg_id in message_ids:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            logger.info(f"Deleted message {msg_id} in chat {chat_id}")
+        except TelegramError as e:
+            logger.error(f"Failed to delete message {msg_id} in chat {chat_id}: {str(e)}")
+
+# Owner command to add a new token
+@retry_on_timeout(retries=3, delay=1)
+async def add_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != int(OWNER_ID):
+        await update.message.reply_text("Yo, slime! 😅 Only the bot owner can add tokens.")
+        logger.info(f"User {user_id} attempted to use /add_token but is not the owner")
+        return
+    
+    new_token = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+    TOKENS[new_token] = {"status": "whitelisted"}
+    with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+        json.dump(TOKENS, f, indent=4)
+    await update.message.reply_text(f"Yo, slime fam! 😎 New token added: {new_token}")
+    logger.info(f"Owner added new token: {new_token}")
+
+# Owner command to blocklist a token
+@retry_on_timeout(retries=3, delay=1)
+async def block_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != int(OWNER_ID):
+        await update.message.reply_text("Yo, slime! 😅 Only the bot owner can block tokens.")
+        logger.info(f"User {user_id} attempted to use /block_token but is not the owner")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("Yo, slime! 😅 Please provide a token to block. Usage: /block_token <token>")
+        return
+    
+    token = context.args[0].strip()
+    if token in TOKENS:
+        TOKENS[token]["status"] = "blocklisted"
+        with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+            json.dump(TOKENS, f, indent=4)
+        await update.message.reply_text(f"Yo, slime fam! 😎 Token {token} has been blocklisted.")
+        logger.info(f"Owner blocklisted token: {token}")
+    else:
+        await update.message.reply_text(f"Yo, slime! 😅 Token {token} not found.")
+        logger.info(f"Owner attempted to block non-existent token: {token}")
+
+# Owner command to list tokens
+@retry_on_timeout(retries=3, delay=1)
+async def list_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != int(OWNER_ID):
+        await update.message.reply_text("Yo, slime! 😅 Only the bot owner can list tokens.")
+        logger.info(f"User {user_id} attempted to use /list_tokens but is not the owner")
+        return
+    
+    token_list = "\n".join([f"{token}: {data['status']}" for token, data in TOKENS.items()])
+    await update.message.reply_text(f"Yo, slime fam! 😎 Token list:\n{token_list}")
+    logger.info(f"Owner listed tokens")
+
+# Modified /SUIMEME command with access check
 @retry_on_timeout(retries=3, delay=1)
 async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     command_text = update.message.text.strip()
     logger.info(f"Received /SUIMEME command from user {user_id} in chat {chat_id}: {command_text}")
+
+    # Check if user is approved
+    if update.effective_chat.type in ["group", "supergroup"] and not await is_user_approved(chat_id, user_id):
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        group_name = update.effective_chat.title or "this group"
+        msg = await update.message.reply_text(
+            f"Yo, slime fam! 😅 To use {ticker} bot commands in {group_name}, reply here with a valid 10-character token (uppercase letters and digits). Got one? Send it now!"
+        )
+        context.user_data['awaiting_token'] = {'chat_id': chat_id, 'group_name': group_name, 'request_message_id': msg.message_id}
+        logger.info(f"User {user_id} in chat {chat_id} is not approved, requested token")
+        return
 
     key = f"{chat_id}_{user_id}"
     current_time = time.time()
@@ -335,7 +547,7 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ACTIVE_REQUESTS.get(key, False):
         ticker = context.chat_data.get('ticker', '$SUIMEME')
         await update.message.reply_text(
-            f"Yo, slime fam! 😎 Hold on, you're spamming too fast! Wait for your current {ticker} meme to finish! 💦"
+            f"Yo, slime fam! 😎 Hold on, you're already generating a {ticker} meme! Wait for it to finish! 💦"
         )
         logger.info(f"User {user_id} in chat {chat_id} has active request, blocked")
         return
@@ -394,6 +606,12 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.chat.send_action(ChatAction.TYPING)
         await asyncio.sleep(TYPING_DELAY)
 
+        # Send generating message ONCE
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        generating_msg = await update.message.reply_text(f"Generating your {ticker} meme")
+        logger.debug(f"Sent generating message for user {user_id} in chat {chat_id}")
+
+        # Parse user input
         args = context.args or []
         user_input = " ".join(args).strip().lower()
         logger.debug(f"Raw user input: {user_input}")
@@ -473,31 +691,47 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 description = description_input
             logger.debug(f"Parsed - Description: {description}, Scene: {scene}, Color: {color}, Custom Text: {custom_text}, Additional Characters: {additional_characters}, Object: {object_sitting}")
 
-        ticker = context.chat_data.get('ticker', '$SUIMEME')
-        await update.message.reply_text(f"Generating your {ticker} meme")
+        # Generate prompt and image
         prompt = generate_meme_prompt(description, scene, custom_text, color, additional_characters, theme, context.chat_data)
         if object_sitting:
             prompt = prompt.replace(f"sitting confidently on {random.choice(objects)}", f"sitting confidently on {object_sitting}")
+        logger.debug(f"Final prompt for image generation: {prompt}")
         image_url, error = await generate_image(prompt)
+        
         if error:
-            logger.error(f"Failed to generate image: {error}")
-            await update.message.reply_text(f"Oops, failed to generate meme: {error}")
+            logger.error(f"Failed to generate image for user {user_id} in chat {chat_id}: {error}")
+            await generating_msg.reply_text(f"Oops, failed to generate meme: {error}")
             return
-        logger.info(f"Successfully generated image: {image_url}")
-        await update.message.reply_photo(
+        logger.info(f"Successfully generated image for user {user_id} in chat {chat_id}: {image_url}")
+        await generating_msg.reply_photo(
             photo=image_url,
             caption=f"{ticker} Meme: {prompt}"
         )
 
+    except Exception as e:
+        logger.error(f"Unexpected error in suimeme for user {user_id} in chat {chat_id}: {str(e)}")
+        await update.message.reply_text(f"Oops, slime failed! 😅 Error: {str(e)}. Try again!")
+        
     finally:
         ACTIVE_REQUESTS[key] = False
         logger.debug(f"Released active request lock for {key}")
 
+# Modified /settings command with access check
 @retry_on_timeout(retries=3, delay=1)
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     logger.info(f"/settings from {user_id} in chat {chat_id}")
+
+    if update.effective_chat.type in ["group", "supergroup"] and not await is_user_approved(chat_id, user_id):
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        group_name = update.effective_chat.title or "this group"
+        msg = await update.message.reply_text(
+            f"Yo, slime fam! 😅 To use {ticker} bot commands in {group_name}, reply here with a valid 10-character token (uppercase letters and digits). Got one? Send it now!"
+        )
+        context.user_data['awaiting_token'] = {'chat_id': chat_id, 'group_name': group_name, 'request_message_id': msg.message_id}
+        logger.info(f"User {user_id} in chat {chat_id} is not approved, requested token")
+        return
 
     if not await is_user_admin(update, context):
         ticker = context.chat_data.get('ticker', '$SUIMEME')
@@ -574,7 +808,18 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @retry_on_timeout(retries=3, delay=1)
 async def hey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    logger.info(f"/hey from {user_id}")
+    chat_id = update.effective_chat.id
+    logger.info(f"/hey from {user_id} in chat {chat_id}")
+
+    if update.effective_chat.type in ["group", "supergroup"] and not await is_user_approved(chat_id, user_id):
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        group_name = update.effective_chat.title or "this group"
+        msg = await update.message.reply_text(
+            f"Yo, slime fam! 😅 To use {ticker} bot commands in {group_name}, reply here with a valid 10-character token (uppercase letters and digits). Got one? Send it now!"
+        )
+        context.user_data['awaiting_token'] = {'chat_id': chat_id, 'group_name': group_name, 'request_message_id': msg.message_id}
+        logger.info(f"User {user_id} in chat {chat_id} is not approved, requested token")
+        return
     
     await update.message.chat.send_action(ChatAction.TYPING)
     await asyncio.sleep(1)
@@ -697,38 +942,88 @@ async def handle_setting_input(update: Update, context: ContextTypes.DEFAULT_TYP
 
 @retry_on_timeout(retries=3, delay=1)
 async def start_com(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    logger.info(f"/start from {user_id} in chat {chat_id}")
+
+    if update.effective_chat.type in ["group", "supergroup"] and not await is_user_approved(chat_id, user_id):
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        group_name = update.effective_chat.title or "this group"
+        msg = await update.message.reply_text(
+            f"Yo, slime fam! 😅 To use {ticker} bot commands in {group_name}, reply here with a valid 10-character token (uppercase letters and digits). Got one? Send it now!"
+        )
+        context.user_data['awaiting_token'] = {'chat_id': chat_id, 'group_name': group_name, 'request_message_id': msg.message_id}
+        logger.info(f"User {user_id} in chat {chat_id} is not approved, requested token")
+        return
+
     await update.message.chat.send_action(ChatAction.TYPING)
     await asyncio.sleep(1)
+    
     if 'character_image' not in context.chat_data:
         ticker = context.chat_data.get('ticker', '$SUIMEME')
         image_url = await search_image_url(ticker)
         context.chat_data['character_image'] = image_url if image_url else None
+    
     welcome = (
-        "Yo, welcome to SuiMemeBot! 👑💦 I’m the Blue Slime King, droppin’ memes!\n\n"
-        "/SUIMEME to make memes\n/how for tips\n/hey to vibe\n/settings to customize this group\n\n"
-        "Let’s make the blockchain bounce!"
+        f"Yo, welcome to SuiMemeBot! 👑💦 I’m the {context.chat_data.get('main_character', 'Blue Slime King')}, droppin’ memes!\n\n"
+        f"/SUIMEME to make memes\n/how for tips\n/hey to vibe\n/settings to customize group settings\n\n"
+        f"Let’s make the blockchain bounce!"
     )
-    logger.info(f"Started by user {update.effective_user.id}")
+    
+    if user_id == int(OWNER_ID):
+        welcome += (
+            "\n\nOwner Commands:\n/add_token - Add a new token\n/block_token <token> - Block a token\n"
+            "/list_tokens - List all tokens"
+        )
+    
     await update.message.reply_text(welcome)
 
 @retry_on_timeout(retries=3, delay=1)
 async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    logger.info(f"/how from {user_id} in chat {chat_id}")
+
+    if update.effective_chat.type in ["group", "supergroup"] and not await is_user_approved(chat_id, user_id):
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        group_name = update.effective_chat.title or "this group"
+        msg = await update.message.reply_text(
+            f"Yo, slime fam! 😅 To use {ticker} bot commands in {group_name}, reply here with a valid 10-character token (uppercase letters and digits). Got one? Send it now!"
+        )
+        context.user_data['awaiting_token'] = {'chat_id': chat_id, 'group_name': group_name, 'request_message_id': msg.message_id}
+        logger.info(f"User {user_id} in chat {chat_id} is not approved, requested token")
+        return
+
     await update.message.chat.send_action(ChatAction.TYPING)
     await asyncio.sleep(1)
     ticker = context.chat_data.get('ticker', '$SUIMEME')
     main_character = context.chat_data.get('main_character', 'Blue Slime King')
     help_text = (
         f"Wanna meme with {main_character}? Use /SUIMEME and describe it! 😎\n\n"
-        "Add:\n- Scenes: explosion, fireworks, storm, wwe ring\n- Colors: red, blue, green\n"
-        "- Text: 'LFG!!'\n- Actions: 'eating pizza'\n\n"
-        "Examples:\n- /SUIMEME slime on toilet\n- /SUIMEME explosion 'LFG!!'\n"
-        "- /SUIMEME blue dancing underwater\n- /SUIMEME with pepe prog in wwe ring\n\n"
+        f"Add:\n- Scenes: explosion, fireworks, storm, wwe ring\n- Colors: red, blue, green\n"
+        f"- Text: 'LFG!!'\n- Actions: 'eating pizza'\n\n"
+        f"Examples:\n- /SUIMEME slime on toilet\n- /SUIMEME explosion 'LFG!!'\n"
+        f"- /SUIMEME blue dancing underwater\n- /SUIMEME with pepe prog in wwe ring\n\n"
         f"Use /settings to change the main character, ticker (like {ticker}), or links for this group!\n/hey to vibe, /start to join!"
     )
     await update.message.reply_text(help_text)
 
 @retry_on_timeout(retries=3, delay=1)
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    logger.info(f"/help from {user_id} in chat {chat_id}")
+
+    if update.effective_chat.type in ["group", "supergroup"] and not await is_user_approved(chat_id, user_id):
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        group_name = update.effective_chat.title or "this group"
+        msg = await update.message.reply_text(
+            f"Yo, slime fam! 😅 To use {ticker} bot commands in {group_name}, reply here with a valid 10-character token (uppercase letters and digits). Got one? Send it now!"
+        )
+        context.user_data['awaiting_token'] = {'chat_id': chat_id, 'group_name': group_name, 'request_message_id': msg.message_id}
+        logger.info(f"User {user_id} in chat {chat_id} is not approved, requested token")
+        return
+
     await update.message.chat.send_action(ChatAction.TYPING)
     await asyncio.sleep(1)
     ticker = context.chat_data.get('ticker', '$SUIMEME')
@@ -742,7 +1037,17 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     command = update.message.text.strip()
     logger.info(f"Unknown command: {command} from {user_id} in {chat_id}")
-    
+
+    if update.effective_chat.type in ["group", "supergroup"] and not await is_user_approved(chat_id, user_id):
+        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        group_name = update.effective_chat.title or "this group"
+        msg = await update.message.reply_text(
+            f"Yo, slime fam! 😅 To use {ticker} bot commands in {group_name}, reply here with a valid 10-character token (uppercase letters and digits). Got one? Send it now!"
+        )
+        context.user_data['awaiting_token'] = {'chat_id': chat_id, 'group_name': group_name, 'request_message_id': msg.message_id}
+        logger.info(f"User {user_id} in chat {chat_id} is not approved, requested token")
+        return
+
     await update.message.chat.send_action(ChatAction.TYPING)
     await asyncio.sleep(1)
     ticker = context.chat_data.get('ticker', '$SUIMEME')
@@ -760,21 +1065,41 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error sending error message: {e}")
 
+# Acquire lock to prevent multiple instances
+def acquire_lock():
+    lock_file = open("bot.lock", "w")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return lock_file
+    except IOError:
+        logger.error("Another bot instance is running")
+        exit(1)
+
 def main():
-    if not TELEGRAM_TOKEN or not REPLICATE_API_TOKEN:
-        logger.error("Missing TELEGRAM_TOKEN or REPLICATE_API_TOKEN")
+    if not TELEGRAM_TOKEN or not REPLICATE_API_TOKEN or not OWNER_ID:
+        logger.error("Missing TELEGRAM_TOKEN, REPLICATE_API_TOKEN, or OWNER_ID")
         return
 
+    lock = acquire_lock()
+    tokens = load_or_generate_tokens()
+    logger.info("Tokens loaded/generated")
+
+    # Build the application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
+    # Add handlers
     application.add_handler(CommandHandler(["SUIMEME", "suimeme"], suimeme))
     application.add_handler(CommandHandler(["hey", "HEY"], hey))
     application.add_handler(CommandHandler(["settings", "SETTINGS"], settings))
     application.add_handler(CallbackQueryHandler(button_callback))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_setting_input))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_token_input))
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
     application.add_handler(CommandHandler(["start", "START"], start_com))
     application.add_handler(CommandHandler(["how", "HOW"], how))
     application.add_handler(CommandHandler(["help", "HELP"], help_command))
+    application.add_handler(CommandHandler(["add_token"], add_token))
+    application.add_handler(CommandHandler(["block_token"], block_token))
+    application.add_handler(CommandHandler(["list_tokens"], list_tokens))
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     application.add_error_handler(error_handler)
     
@@ -791,6 +1116,8 @@ def main():
         loop.run_until_complete(application.shutdown())
         if not loop.is_closed():
             loop.close()
+        lock.close()
+        os.remove("bot.lock")
         logger.info("Bot shutdown complete.")
 
 if __name__ == "__main__":
