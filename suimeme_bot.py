@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-OWNER_ID = os.getenv("OWNER_ID")  # Fixed: Corrected to use OWNER_ID from env, not TELEGRAM_TOKEN
+OWNER_ID = os.getenv("OWNER_ID")
 
 # Token storage file
 TOKEN_FILE = "tokens.json"
@@ -405,11 +405,12 @@ async def handle_token_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             logger.info(f"User {user_id} provided malformed token {token} for chat {group_chat_id}")
             # Schedule deletion of user's token attempt and bot's response
-            context.job_queue.run_once(
-                lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, [update.message.message_id, msg.message_id])),
-                TOKEN_MESSAGE_DELETE_DELAY,
-                chat_id=chat_id
-            )
+            if context.job_queue:
+                context.job_queue.run_once(
+                    lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, [update.message.message_id, msg.message_id])),
+                    TOKEN_MESSAGE_DELETE_DELAY,
+                    chat_id=chat_id
+                )
         except TelegramError as e:
             logger.error(f"Failed to respond to invalid token from user {user_id}: {str(e)}")
         return
@@ -434,11 +435,12 @@ async def handle_token_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if request_msg_id:
                 messages_to_delete.append(request_msg_id)
             messages_to_delete.append(msg.message_id)
-            context.job_queue.run_once(
-                lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, messages_to_delete)),
-                TOKEN_MESSAGE_DELETE_DELAY,
-                chat_id=chat_id
-            )
+            if context.job_queue:
+                context.job_queue.run_once(
+                    lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, messages_to_delete)),
+                    TOKEN_MESSAGE_DELETE_DELAY,
+                    chat_id=chat_id
+                )
         except TelegramError as e:
             logger.error(f"Failed to send welcome message to user {user_id}: {str(e)}")
         del context.user_data['awaiting_token']
@@ -449,11 +451,12 @@ async def handle_token_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             logger.info(f"User {user_id} provided invalid or blocklisted token {token} for chat {group_chat_id}")
             # Schedule deletion of user's token attempt and bot's response
-            context.job_queue.run_once(
-                lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, [update.message.message_id, msg.message_id])),
-                TOKEN_MESSAGE_DELETE_DELAY,
-                chat_id=chat_id
-            )
+            if context.job_queue:
+                context.job_queue.run_once(
+                    lambda ctx: asyncio.create_task(delete_messages(ctx, chat_id, [update.message.message_id, msg.message_id])),
+                    TOKEN_MESSAGE_DELETE_DELAY,
+                    chat_id=chat_id
+                )
         except TelegramError as e:
             logger.error(f"Failed to respond to invalid token from user {user_id}: {str(e)}")
 
@@ -470,7 +473,7 @@ async def delete_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, mess
 @retry_on_timeout(retries=3, delay=1)
 async def add_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id != int(OWNER_ID):  # Ensure OWNER_ID is compared as an integer
+    if user_id != int(OWNER_ID):
         await update.message.reply_text("Yo, slime! 😅 Only the bot owner can add tokens.")
         logger.info(f"User {user_id} attempted to use /add_token but is not the owner")
         return
@@ -1063,8 +1066,10 @@ def main():
         print(token)
     logger.info("Tokens printed for owner")
 
+    # Build the application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
+    # Add handlers
     application.add_handler(CommandHandler(["SUIMEME", "suimeme"], suimeme))
     application.add_handler(CommandHandler(["hey", "HEY"], hey))
     application.add_handler(CommandHandler(["settings", "SETTINGS"], settings))
@@ -1081,19 +1086,8 @@ def main():
     application.add_error_handler(error_handler)
     
     logger.info("Bot starting...")
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(application.initialize())
-        loop.run_until_complete(application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True))
-    except KeyboardInterrupt:
-        logger.info("Bot interrupted, shutting down...")
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-    finally:
-        loop.run_until_complete(application.shutdown())
-        if not loop.is_closed():
-            loop.close()
-        logger.info("Bot shutdown complete.")
+    # Run the bot using the built-in polling mechanism
+    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
