@@ -13,34 +13,45 @@ import functools
 import time
 from googlesearch import search
 import validators
-import validators
 from dotenv import load_dotenv
-# Set up logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
-)
-logger = logging.getLogger(__name__)
+from fastapi import FastAPI, Request
+import uvicorn
 
+# Load environment variables
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
+USE_WEBHOOK = os.getenv("USE_WEBHOOK", "false").lower() == "true"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", 8000))
 
-# Load responses and dynamic words
+# Set up logging
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=getattr(logging, log_level, logging.INFO)
+)
+logger = logging.getLogger(__name__)
+
+# Load responses and dynamic words with fallbacks
 try:
     with open("responses.json", "r", encoding="utf-8") as f:
         HEY_RESPONSES = json.load(f)
 except FileNotFoundError:
-    logger.error("responses.json not found! Please create the file.")
-    exit(1)
+    logger.warning("responses.json not found, using default responses")
+    HEY_RESPONSES = {}
+    with open("responses.json", "w", encoding="utf-8") as f:
+        json.dump(HEY_RESPONSES, f)
 
 try:
     with open("dynamic_words.json", "r", encoding="utf-8") as f:
         DYNAMIC_WORDS = json.load(f)
 except FileNotFoundError:
-    logger.error("dynamic_words.json not found! Please create the file.")
-    exit(1)
+    logger.warning("dynamic_words.json not found, using default words")
+    DYNAMIC_WORDS = {}
+    with open("dynamic_words.json", "w", encoding="utf-8") as f:
+        json.dump(DYNAMIC_WORDS, f)
 
 # Default lists
 DEFAULT_OBJECTS = [
@@ -92,7 +103,7 @@ USER_REQUEST_COUNTS = {}  # {f"{chat_id}_{user_id}": [timestamps]}
 async def search_image_url(ticker):
     try:
         query = f"{ticker} logo character site:*.org | site:*.com -inurl:(signup | login)"
-        logger.debug(f"Searching for image URL with query: {query}")
+        logger.info(f"Searching for image URL with query: {query}")
         for url in search(query, num_results=5):
             if url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
                 logger.info(f"Found image URL: {url}")
@@ -168,7 +179,7 @@ async def is_user_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
     chat_id = update.effective_chat.id
     
     if update.effective_chat.type == "private":
-        logger.debug(f"User {user_id} in private chat {chat_id}, admin check bypassed")
+        logger.info(f"User {user_id} in private chat {chat_id}, admin check bypassed")
         return True
     
     if update.effective_chat.type not in ["group", "supergroup"]:
@@ -178,7 +189,7 @@ async def is_user_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
     try:
         chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
         is_admin = isinstance(chat_member, (ChatMemberAdministrator, ChatMemberOwner))
-        logger.debug(f"User {user_id} in chat {chat_id} admin status: {is_admin}")
+        logger.info(f"User {user_id} in chat {chat_id} admin status: {is_admin}")
         return is_admin
     except TelegramError as e:
         logger.error(f"Error checking admin status for user {user_id} in chat {chat_id}: {str(e)}")
@@ -224,7 +235,7 @@ async def check_user_rate_limit(chat_id, user_id) -> tuple[bool, float]:
 # Search for unknown terms
 async def search_term(term):
     try:
-        logger.debug(f"Searching for term: {term}")
+        logger.info(f"Searching for term: {term}")
         for result in search(term, num_results=1):
             return f"{term} (based on web context)"
         return term
@@ -267,7 +278,7 @@ def generate_meme_prompt(description=None, scene=None, custom_text=None, color=N
     if custom_text:
         base_prompt += f", with the text '{custom_text}' prominently displayed on the image"
     base_prompt += ", vibrant, humorous, high-quality, meme-inspired"
-    logger.debug(f"Generated prompt: {base_prompt}")
+    logger.info(f"Generated prompt: {base_prompt}")
     return base_prompt
 
 async def generate_image(prompt):
@@ -281,7 +292,7 @@ async def generate_image(prompt):
             "version": "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
             "input": {"prompt": prompt}
         }
-        logger.debug(f"Sending request to Replicate API: {url} with prompt: {prompt}")
+        logger.info(f"Sending request to Replicate API with prompt: {prompt}")
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(url, headers=headers, json=data)
             if response.status_code == 429:
@@ -296,7 +307,7 @@ async def generate_image(prompt):
             if not prediction_id:
                 logger.error("No prediction ID in response")
                 return None, "Failed to get prediction ID"
-            logger.debug(f"Prediction ID: {prediction_id}")
+            logger.info(f"Prediction ID: {prediction_id}")
             
             max_wait_time = 120
             start_time = time.time()
@@ -369,7 +380,7 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check cooldown
         last_request_time = COOLDOWN_STORAGE.get(key, 0)
         time_since_last = current_time - last_request_time
-        logger.debug(f"User {user_id} in chat {chat_id}, time since last: {time_since_last:.3f}s, cooldown: {SUIMEME_COOLDOWN}s")
+        logger.info(f"User {user_id} in chat {chat_id}, time since last: {time_since_last:.3f}s, cooldown: {SUIMEME_COOLDOWN}s")
         if time_since_last < SUIMEME_COOLDOWN or time_since_last < MIN_REQUEST_GAP:
             cooldown_left = SUIMEME_COOLDOWN - time_since_last if time_since_last < SUIMEME_COOLDOWN else MIN_REQUEST_GAP - time_since_last
             ticker = context.chat_data.get('ticker', '$SUIMEME')
@@ -381,7 +392,7 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Update cooldown
         COOLDOWN_STORAGE[key] = current_time
-        logger.debug(f"Updated cooldown timestamp for {key}: {current_time}")
+        logger.info(f"Updated cooldown timestamp for {key}: {current_time}")
 
         # Initialize default settings
         if 'main_character' not in context.chat_data:
@@ -400,7 +411,7 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         args = context.args or []
         user_input = " ".join(args).strip().lower()
-        logger.debug(f"Raw user input: {user_input}")
+        logger.info(f"Raw user input: {user_input}")
 
         # Parse quoted text
         quote_match = re.search(r'["\'](.*?)["\']', user_input, re.IGNORECASE)
@@ -475,7 +486,7 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
             description_input = description_input.strip()
             if description_input and description_input.lower() != main_character:
                 description = description_input
-            logger.debug(f"Parsed - Description: {description}, Scene: {scene}, Color: {color}, Custom Text: {custom_text}, Additional Characters: {additional_characters}, Object: {object_sitting}")
+            logger.info(f"Parsed - Description: {description}, Scene: {scene}, Color: {color}, Custom Text: {custom_text}, Additional Characters: {additional_characters}, Object: {object_sitting}")
 
         ticker = context.chat_data.get('ticker', '$SUIMEME')
         await update.message.reply_text(f"Generating your {ticker} meme")
@@ -495,7 +506,7 @@ async def suimeme(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     finally:
         ACTIVE_REQUESTS[key] = False
-        logger.debug(f"Released active request lock for {key}")
+        logger.info(f"Released active request lock for {key}")
 
 @retry_on_timeout(retries=3, delay=1)
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -704,7 +715,7 @@ async def start_com(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(ChatAction.TYPING)
     await asyncio.sleep(1)
     if 'character_image' not in context.chat_data:
-        ticker = context.chat_data.get('ticker', '$SUIMEME')
+        ticker = context.chat_data.get(' ticker', '$SUIMEME')
         image_url = await search_image_url(ticker)
         context.chat_data['character_image'] = image_url if image_url else None
     welcome = (
@@ -764,38 +775,71 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error sending error message: {e}")
 
+# FastAPI app for webhook mode
+app = FastAPI()
+
+@app.on_event("startup")
+async def startup():
+    if USE_WEBHOOK:
+        logger.info("Setting up webhook...")
+        await application.initialize()
+        await application.bot.set_webhook(url=WEBHOOK_URL)
+        logger.info(f"Webhook set to {WEBHOOK_URL}")
+
+@app.on_event("shutdown")
+async def shutdown():
+    if USE_WEBHOOK:
+        logger.info("Shutting down...")
+        await application.shutdown()
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    update = Update.de_json(await request.json(), application.bot)
+    await application.process_update(update)
+    return {"status": "ok"}
+
+# Initialize application
+application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+# Add handlers
+application.add_handler(CommandHandler(["SUIMEME", "suimeme"], suimeme))
+application.add_handler(CommandHandler(["hey", "HEY"], hey))
+application.add_handler(CommandHandler(["settings", "SETTINGS"], settings))
+application.add_handler(CallbackQueryHandler(button_callback))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_setting_input))
+application.add_handler(CommandHandler(["start", "START"], start_com))
+application.add_handler(CommandHandler(["how", "HOW"], how))
+application.add_handler(CommandHandler(["help", "HELP"], help_command))
+application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+application.add_error_handler(error_handler)
+
 def main():
     if not TELEGRAM_TOKEN or not REPLICATE_API_TOKEN:
         logger.error("Missing TELEGRAM_TOKEN or REPLICATE_API_TOKEN")
         return
+    if USE_WEBHOOK and not WEBHOOK_URL:
+        logger.error("Missing WEBHOOK_URL for webhook mode")
+        return
 
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    application.add_handler(CommandHandler(["SUIMEME", "suimeme"], suimeme))
-    application.add_handler(CommandHandler(["hey", "HEY"], hey))
-    application.add_handler(CommandHandler(["settings", "SETTINGS"], settings))
-    application.add_handler(CallbackQueryHandler(button_callback))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_setting_input))
-    application.add_handler(CommandHandler(["start", "START"], start_com))
-    application.add_handler(CommandHandler(["how", "HOW"], how))
-    application.add_handler(CommandHandler(["help", "HELP"], help_command))
-    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
-    application.add_error_handler(error_handler)
-    
-    logger.info("Bot starting...")
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(application.initialize())
-        loop.run_until_complete(application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True))
-    except KeyboardInterrupt:
-        logger.info("Bot interrupted, shutting down...")
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-    finally:
-        loop.run_until_complete(application.shutdown())
-        if not loop.is_closed():
-            loop.close()
-        logger.info("Bot shutdown complete.")
+    if USE_WEBHOOK:
+        logger.info("Starting bot with webhook...")
+        uvicorn.run(app, host="0.0.0.0", port=PORT)
+    else:
+        logger.info("Starting bot with polling...")
+        loop = asyncio.get_event_loop()
+        try:
+            loop.run_until_complete(application.initialize())
+            loop.run_until_complete(application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True))
+        except KeyboardInterrupt:
+            logger.info("Bot interrupted, shutting down...")
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+        finally:
+            loop.run_until_complete(application.shutdown())
+            if not loop.is_closed():
+                loop.close()
+            logger.info("Bot shutdown complete.")
 
 if __name__ == "__main__":
     main()
